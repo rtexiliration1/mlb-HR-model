@@ -605,11 +605,12 @@ def resolve_exact_or_case_insensitive_sheet(available_sheets, desired_sheet):
     return None
 
 
+
 def main():
     st.set_page_config(page_title="HR Projections 26", layout="wide")
     st.title("HR Projections 26 Portal")
-    st.caption("App version: visible prediction tabs v17 — duplicate widget ID hotfix")
-    st.caption("Dashboard displays only the 10 requested tabs. It uses the matching individual workbook sheet, with case-insensitive matching only. No fallback remapping is applied.")
+    st.caption("App version: visible prediction tabs v18 — direct row display hotfix")
+    st.caption("Displays only the 10 requested tabs. Rows are fetched once for the selected run and filtered directly by matching workbook sheet name.")
 
     runs = fetch_runs()
     if runs.empty:
@@ -621,7 +622,12 @@ def main():
         latest_idx = int(runs[runs["is_latest"].fillna(False)].index[0])
 
     run_labels = [format_run_label(row) for _, row in runs.iterrows()]
-    selected_label = st.selectbox("Published run", run_labels, index=latest_idx, key="published_run_selector_v17")
+    selected_label = st.selectbox(
+        "Published run",
+        run_labels,
+        index=latest_idx,
+        key="published_run_selector_v18",
+    )
     selected_row = runs.iloc[run_labels.index(selected_label)]
     run_id = selected_row["run_id"]
 
@@ -642,16 +648,25 @@ def main():
         "Strikeout Props",
     ]
 
-    available_sheets = available_sheet_names(run_id)
+    # Fetch all rows once. This avoids exact .eq() sheet-name issues and avoids fallback replication.
+    all_rows = fetch_rows(run_id, sheet_name=None, limit=5000)
+
+    if all_rows.empty:
+        st.error("No prediction_rows were returned for this run. The run header exists, but the row data is not visible to Streamlit.")
+        st.stop()
+
+    if "Sheet" not in all_rows.columns:
+        st.error("prediction_rows were returned, but no Sheet/sheet_name column was available after flattening.")
+        st.dataframe(to_streamlit_safe_df(all_rows.head(50)), use_container_width=True, hide_index=True)
+        st.stop()
+
+    available_sheets = sorted([str(x) for x in all_rows["Sheet"].dropna().unique()])
 
     with st.expander("Available workbook sheets", expanded=False):
-        if available_sheets:
-            st.write(available_sheets)
-        else:
-            st.warning("No sheet names found for this run.")
+        st.write(available_sheets)
 
     st.subheader("Dashboard Tabs")
-    st.caption("Only the 10 locked dashboard tabs are shown. Each tab uses its matching individual workbook sheet. No generic fallback sheets are used.")
+    st.caption("Only the 10 locked dashboard tabs are shown. Each tab is filtered from the actual individual workbook sheet. No generic fallback sheets are used.")
 
     dashboard_tabs = st.tabs(locked_tabs)
 
@@ -659,12 +674,17 @@ def main():
         with tab:
             st.subheader(tab_name)
 
-            matched_sheet = resolve_exact_or_case_insensitive_sheet(available_sheets, tab_name)
+            desired_norm = str(tab_name).strip().casefold()
+            matched_sheet = None
+            for sheet in available_sheets:
+                if str(sheet).strip().casefold() == desired_norm:
+                    matched_sheet = sheet
+                    break
 
             if matched_sheet is None:
                 st.warning(f"No matching individual workbook sheet found for: {tab_name}")
                 with st.expander("Available sheets seen for this run", expanded=True):
-                    st.write(available_sheets or ["No sheet rows found for this run"])
+                    st.write(available_sheets)
                 continue
 
             if matched_sheet != tab_name:
@@ -672,11 +692,36 @@ def main():
             else:
                 st.caption(f"Source sheet: {matched_sheet}")
 
-            render_sheet_table(
-                run_id,
-                sheet_name=matched_sheet,
-                title=tab_name,
-                key_prefix=f"locked_individual_{re.sub(r'[^A-Za-z0-9_]+', '_', tab_name)}",
+            mask = all_rows["Sheet"].astype(str).str.strip().str.casefold() == str(matched_sheet).strip().casefold()
+            tab_df = all_rows[mask].copy()
+
+            if tab_df.empty:
+                st.warning(f"The source sheet was found, but no rows were available after filtering: {matched_sheet}")
+                continue
+
+            # Keep a lightweight in-tab search only. No sidebar filters, which can hide rows across many tabs.
+            search = st.text_input(
+                "Search this tab",
+                key=f"search_v18_{re.sub(r'[^A-Za-z0-9_]+', '_', tab_name)}",
+                placeholder="Optional: player, team, game, market...",
+            )
+            if search:
+                search_l = search.lower().strip()
+                searchable_cols = [c for c in ["Selection", "Name", "Team", "Opponent", "Game", "Market", "Recommended Usage", "Final Bet Card Decision", "Should Bet?"] if c in tab_df.columns]
+                if searchable_cols:
+                    search_mask = tab_df[searchable_cols].astype(str).apply(
+                        lambda s: s.str.lower().str.contains(search_l, na=False)
+                    ).any(axis=1)
+                    tab_df = tab_df[search_mask].copy()
+
+            st.caption(f"Showing {len(tab_df):,} rows from source sheet: {matched_sheet}")
+
+            display_df = reorder_columns(tab_df)
+            st.dataframe(
+                to_streamlit_safe_df(display_df),
+                use_container_width=True,
+                hide_index=True,
+                height=650,
             )
 
 
