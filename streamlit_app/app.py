@@ -587,11 +587,13 @@ def render_prediction_section(
     render_sheet_table(run_id, sheet_name=matched_sheet, title=title, key_prefix=key_prefix)
 
 
+
+
 def main():
     st.set_page_config(page_title="HR Projections 26", layout="wide")
     st.title("HR Projections 26 Portal")
-    st.caption("App version: visible prediction tabs v11 — Arrow display hotfix")
-    st.caption("Interactive view of the latest values-only model output workbook. Data expires automatically based on the run retention policy.")
+    st.caption("App version: visible prediction tabs v14 — locked 10 exact workbook tabs")
+    st.caption("Dashboard displays only the 10 locked workbook tabs requested. No sheet-name remapping is applied.")
 
     runs = fetch_runs()
     if runs.empty:
@@ -611,6 +613,7 @@ def main():
 
     st.divider()
 
+    locked_tabs = ['Strong Market Signal Board', 'Final Bet Card', 'Top 3 HR by Game', 'Core HR Top 30', 'Longshots HR', 'Best Game HR Coverage', 'Top 2 Confidence Candidates', 'Risk-Adjusted Parlays', 'Moneyline Predictions', 'Strikeout Props']
     available_sheets = available_sheet_names(run_id)
 
     with st.expander("Available workbook sheets", expanded=False):
@@ -619,207 +622,27 @@ def main():
         else:
             st.warning("No sheet names found for this run.")
 
-    (
-        tab_strong,
-        tab_final,
-        tab_top3_game,
-        tab_core_top30,
-        tab_longshots,
-        tab_game_coverage,
-        tab_top2_conf,
-        tab_parlays,
-        tab_moneyline,
-        tab_strikeouts,
-        tab_audits,
-        tab_archive,
-    ) = st.tabs([
-        "Strong Market Signal Board",
-        "Final Bet Card",
-        "Top 3 HR by Game",
-        "Core HR Top 30",
-        "Longshots HR",
-        "Best Game HR Coverage",
-        "Top 2 Confidence Candidates",
-        "Risk-Adjusted Parlays",
-        "Moneyline Predictions",
-        "Strikeout Props",
-        "Audits / Notes",
-        "Run Archive",
-    ])
+    st.subheader("Workbook Tabs")
+    st.caption("Only the locked 10 workbook tabs are shown below. Each tab requires an exact sheet-name match in Supabase prediction_rows.")
 
-    with tab_strong:
-        render_prediction_section(
-            run_id,
-            available_sheets,
-            "Strong Market Signal Board",
-            [
-                "Strong Market Signal Board",
-                "Market Signal Board",
-                "Strong Signal Board",
-                "Latest Prediction Board",
-            ],
-            "strong_market_signal_board",
-            "Highest-confidence market-facing prediction board from the uploaded model output.",
-        )
+    dashboard_tabs = st.tabs(locked_tabs)
 
-    with tab_final:
-        render_prediction_section(
-            run_id,
-            available_sheets,
-            "Final Bet Card",
-            [
-                "Final Bet Card",
-                "Final Card",
-                "Bet Card",
-            ],
-            "final_bet_card",
-            "Final playable selections from the model output.",
-        )
+    for tab_name, tab in zip(locked_tabs, dashboard_tabs):
+        with tab:
+            st.subheader(tab_name)
 
-    with tab_top3_game:
-        render_prediction_section(
-            run_id,
-            available_sheets,
-            "Top 3 HR by Game",
-            [
-                "Top 3 HR by Game",
-                "Top 3 HR By Game",
-                "HR Top 3 by Game",
-                "Top HR by Game",
-                "Game HR Top 3",
-            ],
-            "top_3_hr_by_game",
-            "Top HR candidates grouped by game.",
-        )
+            if tab_name not in available_sheets:
+                st.warning(f"No exact workbook sheet found for: {tab_name}")
+                with st.expander("Available sheets seen for this run", expanded=False):
+                    st.write(available_sheets)
+                continue
 
-    with tab_core_top30:
-        render_prediction_section(
-            run_id,
-            available_sheets,
-            "Core HR Top 30",
-            [
-                "Core HR Top 30",
-                "HR Top 30",
-                "Core HR Rankings",
-                "HR Rankings",
-                "Raw HR Rankings",
-                "HR Projection Rankings",
-            ],
-            "core_hr_top_30",
-            "Core HR ranking board.",
-        )
-
-    with tab_longshots:
-        render_prediction_section(
-            run_id,
-            available_sheets,
-            "Longshots HR",
-            [
-                "Longshots HR",
-                "HR Longshots",
-                "Longshot HR",
-                "Longshots",
-            ],
-            "longshots_hr",
-            "Lower-probability HR candidates separated from core HR rankings.",
-        )
-
-    with tab_game_coverage:
-        render_prediction_section(
-            run_id,
-            available_sheets,
-            "Best Game HR Coverage",
-            [
-                "Best Game HR Coverage",
-                "Game HR Coverage",
-                "Best HR Coverage",
-                "HR Coverage",
-                "Game Coverage",
-            ],
-            "best_game_hr_coverage",
-            "Game-level HR coverage candidates and handedness coverage roles.",
-        )
-
-    with tab_top2_conf:
-        render_prediction_section(
-            run_id,
-            available_sheets,
-            "Top 2 Confidence Candidates",
-            [
-                "Top 2 Confidence Candidates",
-                "Top 2 Confidence",
-                "Top Two Confidence Candidates",
-                "Top Confidence Candidates",
-                "Top 2",
-            ],
-            "top_2_confidence_candidates",
-            "Top two confidence candidates from the uploaded model output.",
-        )
-
-    with tab_parlays:
-        render_prediction_section(
-            run_id,
-            available_sheets,
-            "Risk-Adjusted Parlays",
-            [
-                "Risk-Adjusted Parlays",
-                "Risk Adjusted Parlays",
-                "Parlays",
-                "Parlay Builder",
-                "HR Parlays",
-                "Flex Parlays",
-            ],
-            "risk_adjusted_parlays",
-            "Parlay candidates with risk and usage guidance.",
-        )
-
-    with tab_moneyline:
-        render_prediction_section(
-            run_id,
-            available_sheets,
-            "Moneyline Predictions",
-            [
-                "Moneyline Predictions",
-                "Moneyline",
-                "ML Predictions",
-                "Moneyline Picks",
-                "Team Moneyline",
-            ],
-            "moneyline_predictions",
-            "Pregame moneyline model output.",
-        )
-
-    with tab_strikeouts:
-        render_prediction_section(
-            run_id,
-            available_sheets,
-            "Strikeout Props",
-            [
-                "Strikeout Props",
-                "Strikeouts",
-                "K Props",
-                "Pitcher Strikeouts",
-                "Strikeout Predictions",
-            ],
-            "strikeout_props",
-            "Pitcher strikeout prop board.",
-        )
-
-    with tab_audits:
-        st.subheader("Audits / Model Notes")
-        audit_sheets = [s for s in available_sheets if any(keyword in s for keyword in AUDIT_SHEET_KEYWORDS)]
-        selected_audit = st.selectbox("Audit sheet", audit_sheets or available_sheets or ["All sheets"], key="audit_sheet_select")
-        render_sheet_table(run_id, sheet_name=selected_audit, key_prefix=f"audits_{selected_audit}")
-
-    with tab_archive:
-        st.subheader("Published Runs")
-        archive_cols = [c for c in [
-            "is_latest", "slate_date", "published_at", "expires_at", "source_workbook_name", "output_workbook_name",
-            "eligible_hitter_count", "eligible_game_count", "strikeouts_run", "validation_status", "run_id"
-        ] if c in runs.columns]
-        st.dataframe(to_streamlit_safe_df(runs[archive_cols]), use_container_width=True, hide_index=True)
-        now = datetime.now(timezone.utc).isoformat()
-        st.caption(f"Current UTC time: {now}. Runs with expires_at before current time should be purged by the scheduled purge job.")
+            render_sheet_table(
+                run_id,
+                sheet_name=tab_name,
+                title=tab_name,
+                key_prefix=f"locked_exact_{re.sub(r'[^A-Za-z0-9_]+', '_', tab_name)}",
+            )
 
 
 if __name__ == "__main__":
