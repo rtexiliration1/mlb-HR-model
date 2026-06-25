@@ -390,6 +390,38 @@ def ensure_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
     return cleaned
 
 
+def to_streamlit_safe_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert a dataframe to a Streamlit/Arrow-safe display frame.
+
+    New model workbooks can place strings like Neutral / Manual Review / Pass
+    in columns that pandas initially inferred as numeric. Streamlit renders
+    dataframes through pyarrow, and pyarrow can fail when a single column
+    mixes numeric values with text. This function is display-only: filtering
+    and sorting should happen before this conversion.
+    """
+    if df is None or df.empty:
+        return df
+
+    safe = ensure_unique_columns(df.copy())
+    safe.columns = [str(c) for c in safe.columns]
+
+    def _safe_cell(value: Any) -> str:
+        if value is None:
+            return ""
+        try:
+            if pd.isna(value):
+                return ""
+        except Exception:
+            pass
+        return str(value)
+
+    for col in safe.columns:
+        safe[col] = safe[col].map(_safe_cell)
+
+    return safe
+
+
 def reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -483,7 +515,7 @@ def render_sheet_table(run_id: str, sheet_name: str | None = None, title: str = 
     safe_key = key_prefix or str(sheet_name or title or "rows").replace(" ", "_").replace("/", "_")
     filtered = apply_filters(df, key_prefix=safe_key)
     st.caption(f"Showing {len(filtered):,} of {len(df):,} loaded rows. Increase DEFAULT_PAGE_SIZE in app.py if needed.")
-    st.dataframe(ensure_unique_columns(filtered), use_container_width=True, hide_index=True, height=650)
+    st.dataframe(to_streamlit_safe_df(filtered), use_container_width=True, hide_index=True, height=650)
 
 
 def available_sheet_names(run_id: str) -> list[str]:
@@ -547,6 +579,8 @@ def render_prediction_section(
         st.warning(f"No matching sheet found for: {title}")
         with st.expander("Sheet names checked"):
             st.write(sheet_candidates)
+        with st.expander("Available sheets seen for this run"):
+            st.write(available_sheets or ["No sheet rows found for this run"])
         return
 
     st.caption(f"Source sheet: {matched_sheet}")
@@ -556,7 +590,7 @@ def render_prediction_section(
 def main():
     st.set_page_config(page_title="HR Projections 26", layout="wide")
     st.title("HR Projections 26 Portal")
-    st.caption("App version: visible prediction tabs v10")
+    st.caption("App version: visible prediction tabs v11 — Arrow display hotfix")
     st.caption("Interactive view of the latest values-only model output workbook. Data expires automatically based on the run retention policy.")
 
     runs = fetch_runs()
@@ -783,7 +817,7 @@ def main():
             "is_latest", "slate_date", "published_at", "expires_at", "source_workbook_name", "output_workbook_name",
             "eligible_hitter_count", "eligible_game_count", "strikeouts_run", "validation_status", "run_id"
         ] if c in runs.columns]
-        st.dataframe(ensure_unique_columns(runs[archive_cols]), use_container_width=True, hide_index=True)
+        st.dataframe(to_streamlit_safe_df(runs[archive_cols]), use_container_width=True, hide_index=True)
         now = datetime.now(timezone.utc).isoformat()
         st.caption(f"Current UTC time: {now}. Runs with expires_at before current time should be purged by the scheduled purge job.")
 
