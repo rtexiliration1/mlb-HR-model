@@ -608,7 +608,7 @@ def resolve_exact_or_case_insensitive_sheet(available_sheets, desired_sheet):
 def main():
     st.set_page_config(page_title="HR Projections 26", layout="wide")
     st.title("HR Projections 26 Portal")
-    st.caption("App version: visible prediction tabs v16 — locked 10 sheet tabs, case-insensitive exact match")
+    st.caption("App version: visible prediction tabs v17 — duplicate widget ID hotfix")
     st.caption("Dashboard displays only the 10 requested tabs. It uses the matching individual workbook sheet, with case-insensitive matching only. No fallback remapping is applied.")
 
     runs = fetch_runs()
@@ -621,7 +621,7 @@ def main():
         latest_idx = int(runs[runs["is_latest"].fillna(False)].index[0])
 
     run_labels = [format_run_label(row) for _, row in runs.iterrows()]
-    selected_label = st.selectbox("Published run", run_labels, index=latest_idx)
+    selected_label = st.selectbox("Published run", run_labels, index=latest_idx, key="published_run_selector_v17")
     selected_row = runs.iloc[run_labels.index(selected_label)]
     run_id = selected_row["run_id"]
 
@@ -679,9 +679,6 @@ def main():
                 key_prefix=f"locked_individual_{re.sub(r'[^A-Za-z0-9_]+', '_', tab_name)}",
             )
 
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
