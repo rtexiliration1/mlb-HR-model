@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -78,7 +79,7 @@ def fetch_rows(run_id: str, sheet_name: str | None = None, limit: int = DEFAULT_
     supabase = get_supabase_client()
     query = (
         supabase.table("prediction_rows")
-        .select("row_id, run_id, sheet_name, market, row_number, name, team, opponent, game, game_pk, raw_projection_rank, projection_percent, model_score, confidence_tier, recommended_usage, final_bet_card_decision, should_bet, caution_flag, validation_status, row_data")
+        .select("*")
         .eq("run_id", run_id)
         .order("sheet_name")
         .order("row_number")
@@ -90,20 +91,64 @@ def fetch_rows(run_id: str, sheet_name: str | None = None, limit: int = DEFAULT_
     return rows_to_dataframe(result.data or [])
 
 
+def _parse_row_data_payload(payload: Any) -> dict[str, Any]:
+    """Return row_data as a dict even if Supabase returns it as a JSON string."""
+    if payload is None:
+        return {}
+
+    if isinstance(payload, dict):
+        return payload
+
+    if isinstance(payload, str):
+        raw = payload.strip()
+        if not raw:
+            return {}
+
+        # Some imports may double-encode JSON. Try a few safe parses.
+        for _ in range(3):
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                return {}
+
+            if isinstance(parsed, dict):
+                return parsed
+
+            if isinstance(parsed, str):
+                raw = parsed.strip()
+                continue
+
+            return {}
+
+    return {}
+
+
 def rows_to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame()
+
     flat_rows = []
     for row in rows:
         base = {k: v for k, v in row.items() if k != "row_data"}
-        row_data = row.get("row_data") or {}
-        if isinstance(row_data, dict):
-            merged = {**row_data, **base}
-        else:
-            merged = base
+        row_data = _parse_row_data_payload(row.get("row_data"))
+
+        # Keep database metadata, but let workbook row_data win if a display column overlaps.
+        merged = {**base, **row_data}
+
+        # Always preserve original database sheet/run/row metadata.
+        if "sheet_name" in base:
+            merged["sheet_name"] = base.get("sheet_name")
+        if "run_id" in base:
+            merged["run_id"] = base.get("run_id")
+        if "row_id" in base:
+            merged["row_id"] = base.get("row_id")
+        if "row_number" in base:
+            merged["row_number"] = base.get("row_number")
+
         flat_rows.append(merged)
+
     df = pd.DataFrame(flat_rows)
-    # User-friendly fallback column aliases when JSON keys differ.
+
     rename_map = {
         "sheet_name": "Sheet",
         "market": "Market",
@@ -123,12 +168,12 @@ def rows_to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
         "validation_status": "Validation Status (extracted)",
         "row_number": "Workbook Row #",
     }
+
     df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
     df = coalesce_duplicate_columns(df)
     df = fill_identity_fallbacks(df)
     df = add_selection_column(df)
     return reorder_columns(df)
-
 
 def _is_blank_value(value: Any) -> bool:
     """Treat None/NaN/empty strings as blank for display fallback logic."""
@@ -442,6 +487,46 @@ def reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
     return ensure_unique_columns(df[ordered_cols])
 
 
+
+def drop_empty_display_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop columns that are completely empty after flattening, so blank extracted fields don't hide workbook values."""
+    if df is None or df.empty:
+        return df
+
+    cleaned = ensure_unique_columns(df.copy())
+    always_keep = {"Sheet", "Workbook Row #", "Selection"}
+
+    keep_cols = []
+    for col in cleaned.columns:
+        if col in {"row_id", "run_id"}:
+            continue
+
+        if col in always_keep:
+            keep_cols.append(col)
+            continue
+
+        series = cleaned[col]
+        text_values = series.map(lambda v: "" if v is None or str(v) in {"nan", "None", "<NA>", "NaT"} else str(v).strip())
+        if text_values.ne("").any():
+            keep_cols.append(col)
+
+    if not keep_cols:
+        return cleaned
+
+    return cleaned[keep_cols]
+
+
+def prepare_display_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Final display prep: remove blank metadata/extracted columns, then apply preferred order."""
+    if df is None or df.empty:
+        return df
+
+    prepared = drop_empty_display_columns(df)
+    prepared = reorder_columns(prepared)
+    prepared = drop_empty_display_columns(prepared)
+    return prepared
+
+
 def format_run_label(row: pd.Series) -> str:
     slate = row.get("slate_date") or "No slate date"
     published = row.get("published_at") or "No publish time"
@@ -515,7 +600,7 @@ def render_sheet_table(run_id: str, sheet_name: str | None = None, title: str = 
     safe_key = key_prefix or str(sheet_name or title or "rows").replace(" ", "_").replace("/", "_")
     filtered = apply_filters(df, key_prefix=safe_key)
     st.caption(f"Showing {len(filtered):,} of {len(df):,} loaded rows. Increase DEFAULT_PAGE_SIZE in app.py if needed.")
-    st.dataframe(to_streamlit_safe_df(filtered), use_container_width=True, hide_index=True, height=650)
+    st.dataframe(to_streamlit_safe_df(filtered), width="stretch", hide_index=True, height=650)
 
 
 def available_sheet_names(run_id: str) -> list[str]:
@@ -609,7 +694,7 @@ def resolve_exact_or_case_insensitive_sheet(available_sheets, desired_sheet):
 def main():
     st.set_page_config(page_title="HR Projections 26", layout="wide")
     st.title("HR Projections 26 Portal")
-    st.caption("App version: visible prediction tabs v18 — direct row display hotfix")
+    st.caption("App version: visible prediction tabs v19 — row_data parser and empty-column display hotfix")
     st.caption("Displays only the 10 requested tabs. Rows are fetched once for the selected run and filtered directly by matching workbook sheet name.")
 
     runs = fetch_runs()
@@ -626,7 +711,7 @@ def main():
         "Published run",
         run_labels,
         index=latest_idx,
-        key="published_run_selector_v18",
+        key="published_run_selector_v19",
     )
     selected_row = runs.iloc[run_labels.index(selected_label)]
     run_id = selected_row["run_id"]
@@ -657,13 +742,22 @@ def main():
 
     if "Sheet" not in all_rows.columns:
         st.error("prediction_rows were returned, but no Sheet/sheet_name column was available after flattening.")
-        st.dataframe(to_streamlit_safe_df(all_rows.head(50)), use_container_width=True, hide_index=True)
+        st.dataframe(to_streamlit_safe_df(all_rows.head(50)), width="stretch", hide_index=True)
         st.stop()
 
     available_sheets = sorted([str(x) for x in all_rows["Sheet"].dropna().unique()])
 
     with st.expander("Available workbook sheets", expanded=False):
         st.write(available_sheets)
+
+    with st.expander("Debug: loaded row/column status", expanded=False):
+        st.write({
+            "loaded_rows": int(len(all_rows)),
+            "loaded_columns": int(len(all_rows.columns)),
+            "columns": list(all_rows.columns),
+        })
+        st.caption("First 10 flattened rows after row_data parsing:")
+        st.dataframe(to_streamlit_safe_df(prepare_display_table(all_rows.head(10))), width="stretch", hide_index=True)
 
     st.subheader("Dashboard Tabs")
     st.caption("Only the 10 locked dashboard tabs are shown. Each tab is filtered from the actual individual workbook sheet. No generic fallback sheets are used.")
@@ -702,7 +796,7 @@ def main():
             # Keep a lightweight in-tab search only. No sidebar filters, which can hide rows across many tabs.
             search = st.text_input(
                 "Search this tab",
-                key=f"search_v18_{re.sub(r'[^A-Za-z0-9_]+', '_', tab_name)}",
+                key=f"search_v19_{re.sub(r'[^A-Za-z0-9_]+', '_', tab_name)}",
                 placeholder="Optional: player, team, game, market...",
             )
             if search:
@@ -716,10 +810,10 @@ def main():
 
             st.caption(f"Showing {len(tab_df):,} rows from source sheet: {matched_sheet}")
 
-            display_df = reorder_columns(tab_df)
+            display_df = prepare_display_table(tab_df)
             st.dataframe(
                 to_streamlit_safe_df(display_df),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 height=650,
             )
