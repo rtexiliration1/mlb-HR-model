@@ -590,11 +590,26 @@ def render_prediction_section(
 
 
 
+def resolve_exact_or_case_insensitive_sheet(available_sheets, desired_sheet):
+    """Return the exact sheet if present; otherwise return a case-insensitive exact-name match.
+    This does not remap to fallback/generic sheets.
+    """
+    if desired_sheet in available_sheets:
+        return desired_sheet
+
+    desired_norm = str(desired_sheet).strip().casefold()
+    for sheet in available_sheets:
+        if str(sheet).strip().casefold() == desired_norm:
+            return sheet
+
+    return None
+
+
 def main():
     st.set_page_config(page_title="HR Projections 26", layout="wide")
     st.title("HR Projections 26 Portal")
-    st.caption("App version: visible prediction tabs v15 — locked 10 display tabs with workbook source fallback")
-    st.caption("Dashboard displays only the 10 requested tabs. If an exact workbook sheet is missing, the app pulls from the closest available imported workbook sheet.")
+    st.caption("App version: visible prediction tabs v16 — locked 10 sheet tabs, case-insensitive exact match")
+    st.caption("Dashboard displays only the 10 requested tabs. It uses the matching individual workbook sheet, with case-insensitive matching only. No fallback remapping is applied.")
 
     runs = fetch_runs()
     if runs.empty:
@@ -627,53 +642,6 @@ def main():
         "Strikeout Props",
     ]
 
-    # Visible tab names stay locked exactly as requested.
-    # Source sheets use exact names first, then fallback to the current imported workbook sheet names.
-    source_candidates = {
-        "Strong Market Signal Board": [
-            "Strong Market Signal Board",
-            "Combined Market Rankings",
-        ],
-        "Final Bet Card": [
-            "Final Bet Card",
-            "Active Pregame Recs",
-        ],
-        "Top 3 HR by Game": [
-            "Top 3 HR by Game",
-            "All HR Rankings",
-        ],
-        "Core HR Top 30": [
-            "Core HR Top 30",
-            "All HR Rankings",
-        ],
-        "Longshots HR": [
-            "Longshots HR",
-            "All HR Rankings",
-        ],
-        "Best Game HR Coverage": [
-            "Best Game HR Coverage",
-        ],
-        "Top 2 Confidence Candidates": [
-            "Top 2 Confidence Candidates",
-            "Combined Market Rankings",
-            "Active Pregame Recs",
-        ],
-        "Risk-Adjusted Parlays": [
-            "Risk-Adjusted Parlays",
-            "Active Pregame Recs",
-            "Combined Market Rankings",
-        ],
-        "Moneyline Predictions": [
-            "Moneyline Predictions",
-            "Combined Market Rankings",
-        ],
-        "Strikeout Props": [
-            "Strikeout Props",
-            "Combined Market Rankings",
-            "Active Pregame Recs",
-        ],
-    }
-
     available_sheets = available_sheet_names(run_id)
 
     with st.expander("Available workbook sheets", expanded=False):
@@ -683,7 +651,7 @@ def main():
             st.warning("No sheet names found for this run.")
 
     st.subheader("Dashboard Tabs")
-    st.caption("Only the 10 locked dashboard tabs are shown. Each tab displays its exact sheet if present, otherwise a source fallback sheet is used.")
+    st.caption("Only the 10 locked dashboard tabs are shown. Each tab uses its matching individual workbook sheet. No generic fallback sheets are used.")
 
     dashboard_tabs = st.tabs(locked_tabs)
 
@@ -691,19 +659,10 @@ def main():
         with tab:
             st.subheader(tab_name)
 
-            candidates = source_candidates.get(tab_name, [tab_name])
-            matched_sheet = None
-
-            # Prefer exact sheet name first.
-            if tab_name in available_sheets:
-                matched_sheet = tab_name
-            else:
-                matched_sheet = find_best_sheet(available_sheets, candidates)
+            matched_sheet = resolve_exact_or_case_insensitive_sheet(available_sheets, tab_name)
 
             if matched_sheet is None:
-                st.warning(f"No source workbook sheet found for: {tab_name}")
-                with st.expander("Sheet names checked", expanded=False):
-                    st.write(candidates)
+                st.warning(f"No matching individual workbook sheet found for: {tab_name}")
                 with st.expander("Available sheets seen for this run", expanded=True):
                     st.write(available_sheets or ["No sheet rows found for this run"])
                 continue
@@ -717,9 +676,12 @@ def main():
                 run_id,
                 sheet_name=matched_sheet,
                 title=tab_name,
-                key_prefix=f"locked_display_{re.sub(r'[^A-Za-z0-9_]+', '_', tab_name)}",
+                key_prefix=f"locked_individual_{re.sub(r'[^A-Za-z0-9_]+', '_', tab_name)}",
             )
 
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()
