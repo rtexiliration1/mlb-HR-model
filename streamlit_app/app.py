@@ -57,18 +57,38 @@ def fetch_runs(limit: int = 25) -> list[dict[str, Any]]:
 
 
 @st.cache_data(ttl=30, show_spinner=False)
-def fetch_prediction_rows(run_id: str, limit: int = 10000) -> list[dict[str, Any]]:
+def fetch_prediction_rows(run_id: str, max_rows: int = 50000, page_size: int = 1000) -> list[dict[str, Any]]:
+    """Fetch all prediction_rows for a run using pagination.
+
+    Supabase/PostgREST often caps API responses at 1,000 rows per request.
+    Without pagination, the app can miss later workbook sheets and show blank tabs.
+    """
     supabase = get_supabase_client()
-    result = (
-        supabase.table("prediction_rows")
-        .select("*")
-        .eq("run_id", run_id)
-        .order("sheet_name")
-        .order("row_number")
-        .limit(limit)
-        .execute()
-    )
-    return result.data or []
+    all_rows: list[dict[str, Any]] = []
+
+    start = 0
+    while start < max_rows:
+        end = min(start + page_size - 1, max_rows - 1)
+
+        result = (
+            supabase.table("prediction_rows")
+            .select("*")
+            .eq("run_id", run_id)
+            .order("sheet_name")
+            .order("row_number")
+            .range(start, end)
+            .execute()
+        )
+
+        batch = result.data or []
+        all_rows.extend(batch)
+
+        if len(batch) < page_size:
+            break
+
+        start += page_size
+
+    return all_rows
 
 
 def parse_row_data(payload: Any) -> dict[str, Any]:
@@ -292,8 +312,8 @@ def render_metric_cards(run: dict[str, Any]):
 def main():
     st.set_page_config(page_title="HR Projections 26", layout="wide")
     st.title("HR Projections 26 Portal")
-    st.caption("App version: v20 — raw row_data display rebuild")
-    st.caption("Shows only the 10 requested dashboard tabs. Each tab reads the matching individual Supabase sheet and displays parsed row_data directly.")
+    st.caption("App version: v21 — paginated row fetch hotfix")
+    st.caption("Shows only the 10 requested dashboard tabs. Fetches all Supabase prediction_rows in pages so later workbook sheets are not missed.")
 
     runs = fetch_runs()
     if not runs:
@@ -311,7 +331,7 @@ def main():
         "Published run",
         labels,
         index=latest_idx,
-        key="published_run_selector_v20",
+        key="published_run_selector_v21",
     )
     run = runs[labels.index(selected_label)]
     run_id = run.get("run_id")
@@ -335,6 +355,15 @@ def main():
             "flattened_rows": len(flat_df),
             "flattened_columns": list(flat_df.columns) if not flat_df.empty else [],
         })
+        if not flat_df.empty and "Sheet" in flat_df.columns:
+            st.caption("Row counts by sheet after pagination:")
+            sheet_counts = (
+                flat_df.groupby("Sheet", dropna=False)
+                .size()
+                .reset_index(name="row_count")
+                .sort_values("Sheet")
+            )
+            st.dataframe(safe_display_df(sheet_counts), width="stretch", hide_index=True)
         st.caption("First raw prediction_rows object:")
         if raw_rows:
             st.json(raw_rows[0])
@@ -368,7 +397,7 @@ def main():
 
             search = st.text_input(
                 "Search this tab",
-                key=f"search_v20_{tab_name}",
+                key=f"search_v21_{tab_name}",
                 placeholder="Optional search...",
             )
             if search:
