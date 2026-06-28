@@ -17,7 +17,7 @@ LOCKED_TABS = [
     "Core HR Top 30",
     "Longshots HR",
     "Best Game HR Coverage",
-    "Top 2 Confidence Candidates",
+    "Top 4 Market Candidates",
     "Risk-Adjusted Parlays",
     "Moneyline Predictions",
     "Strikeout Props",
@@ -312,7 +312,7 @@ def render_metric_cards(run: dict[str, Any]):
 def main():
     st.set_page_config(page_title="HR Projections 26", layout="wide")
     st.title("HR Projections 26 Portal")
-    st.caption("App version: v21 — paginated row fetch hotfix")
+    st.caption("App version: v22 — Top 4 Market Candidates tab update")
     st.caption("Shows only the 10 requested dashboard tabs. Fetches all Supabase prediction_rows in pages so later workbook sheets are not missed.")
 
     runs = fetch_runs()
@@ -331,7 +331,7 @@ def main():
         "Published run",
         labels,
         index=latest_idx,
-        key="published_run_selector_v21",
+        key="published_run_selector_v22",
     )
     run = runs[labels.index(selected_label)]
     run_id = run.get("run_id")
@@ -397,7 +397,7 @@ def main():
 
             search = st.text_input(
                 "Search this tab",
-                key=f"search_v21_{tab_name}",
+                key=f"search_v22_{tab_name}",
                 placeholder="Optional search...",
             )
             if search:
